@@ -54,21 +54,46 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn consume_attribute_value(&mut self) -> Option<Token<'a>> {
-        self.consume_character('=').map(|_| {
-            if let Some(q) = self
-                .consume_character('"')
-                .or_else(|| self.consume_character('\''))
-            {
-                let q = q
-                    .source
-                    .chars()
-                    .next()
-                    .expect("either double or single quote");
-                self.consume_characters(|c| c != &q && c != &'\n');
-                todo!()
-            }
-            todo!()
-        })
+        self.consume_character('=')
+            .map(|_| {
+                if let Some(q) = self
+                    .consume_character('"')
+                    .or_else(|| self.consume_character('\''))
+                {
+                    let q = q
+                        .source
+                        .chars()
+                        .next()
+                        .expect("either double or single quote");
+                    println!("waiting for c to not be {q}");
+                    self.consume_characters(|c| c != &q).map(|span| {
+                        self.consume_character(q);
+                        let value = span.source;
+                        Token {
+                            span,
+                            kind: TokenKind::AttributeValue { value },
+                        }
+                    })
+                } else {
+                    self.consume_characters(|c| !c.is_whitespace() && c != &'>')
+                        .map(|span| {
+                            let value = span.source;
+                            Token {
+                                span,
+                                kind: TokenKind::AttributeValue { value },
+                            }
+                        })
+                }
+            })
+            .or_else(|| {
+                let span = Span::point(self.current_position());
+                let value = span.source;
+                Some(Some(Token {
+                    span,
+                    kind: TokenKind::AttributeValue { value },
+                }))
+            })
+            .flatten()
     }
 
     fn consume_opening_tag_end(&mut self) -> Option<Token<'a>> {
@@ -130,7 +155,7 @@ impl<'a> Tokenizer<'a> {
 
     fn consume_identifier(&mut self) -> Option<Span<'a>> {
         self.consume_whitespace();
-        self.consume_characters(|c| c != &'>' && !c.is_whitespace())
+        self.consume_characters(|c| c != &'=' && c != &'>' && !c.is_whitespace())
     }
 
     fn current_position(&self) -> Position {
@@ -160,7 +185,7 @@ impl<'a> Tokenizer<'a> {
             self.it.next();
             Some(Span {
                 range: Range { start, end },
-                source: &self.source[i - 1..i],
+                source: &self.source[i..i + 1],
             })
         } else {
             None
@@ -337,5 +362,75 @@ mod test {
             assert_eq!((i, &got_token.kind), (i, k));
         }
         assert!(tokenizer.next().is_none());
+    }
+
+    #[test]
+    fn attrib_basic() {
+        let s = "<tag-name attr-name=attr-value>";
+        let expected_kinds = vec![
+            TokenKind::TagName { name: "tag-name" },
+            TokenKind::AttributeName { name: "attr-name" },
+            TokenKind::AttributeValue {
+                value: "attr-value",
+            },
+            TokenKind::OpeningTagEnd,
+        ];
+        let mut tokenizer = Tokenizer::new(&s);
+        for (i, k) in expected_kinds.iter().enumerate() {
+            let got = tokenizer.next().expect("should exist");
+            assert_eq!((i, &got.kind), (i, k));
+        }
+    }
+
+    #[test]
+    fn attrib_without_equals() {
+        let s = "<tag-name attr-name>";
+        let expected_kinds = vec![
+            TokenKind::TagName { name: "tag-name" },
+            TokenKind::AttributeName { name: "attr-name" },
+            TokenKind::AttributeValue { value: "" },
+            TokenKind::OpeningTagEnd,
+        ];
+        let mut tokenizer = Tokenizer::new(&s);
+        for (i, k) in expected_kinds.into_iter().enumerate() {
+            let got = tokenizer.next().map(|g| g.kind);
+            assert_eq!((i, got), (i, Some(k)));
+        }
+    }
+
+    #[test]
+    fn attrib_quoted() {
+        let s = "<tag-name attr-name=\"double quoted 'value' lets go >>> awesome\">";
+        let expected_kinds = vec![
+            TokenKind::TagName { name: "tag-name" },
+            TokenKind::AttributeName { name: "attr-name" },
+            TokenKind::AttributeValue {
+                value: "double quoted 'value' lets go >>> awesome",
+            },
+            TokenKind::OpeningTagEnd,
+        ];
+        let mut tokenizer = Tokenizer::new(&s);
+        for (i, k) in expected_kinds.into_iter().enumerate() {
+            let got = tokenizer.next().map(|g| g.kind);
+            assert_eq!((i, got), (i, Some(k)));
+        }
+    }
+
+    #[test]
+    fn attrib_multiple() {
+        let s = "<tag-name attr-name1 attr-name2=attr-val>";
+        let expected_kinds = vec![
+            TokenKind::TagName { name: "tag-name" },
+            TokenKind::AttributeName { name: "attr-name1" },
+            TokenKind::AttributeValue { value: "" },
+            TokenKind::AttributeName { name: "attr-name2" },
+            TokenKind::AttributeValue { value: "attr-val" },
+            TokenKind::OpeningTagEnd,
+        ];
+        let mut tokenizer = Tokenizer::new(&s);
+        for (i, k) in expected_kinds.into_iter().enumerate() {
+            let got = tokenizer.next().map(|g| g.kind);
+            assert_eq!((i, got), (i, Some(k)));
+        }
     }
 }
