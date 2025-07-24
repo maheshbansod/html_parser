@@ -1,0 +1,341 @@
+use std::str::CharIndices;
+
+pub struct Tokenizer<'a> {
+    source: &'a str,
+
+    it: CharIndices<'a>,
+    consume_mode: ConsumeMode,
+
+    line: usize,
+    column: usize,
+}
+
+impl<'a> Tokenizer<'a> {
+    pub fn new(source: &'a str) -> Self {
+        let it = source.char_indices();
+        Self {
+            source,
+            line: 0,
+            column: 0,
+            consume_mode: ConsumeMode::OutsideTag,
+            it,
+        }
+    }
+
+    pub fn next(&mut self) -> Option<Token<'a>> {
+        match self.consume_mode {
+            ConsumeMode::OutsideTag => {
+                if let Some(tag) = self.consume_tag() {
+                    if !matches!(tag.kind, TokenKind::TagEnd { name: _ }) {
+                        self.consume_mode = ConsumeMode::AttributeName;
+                    }
+                    Some(tag)
+                } else {
+                    self.consume_text_node()
+                }
+            }
+            ConsumeMode::AttributeName => {
+                self.consume_whitespace();
+                if let Some(tag_end) = self.consume_opening_tag_end() {
+                    self.consume_mode = ConsumeMode::OutsideTag;
+                    Some(tag_end)
+                } else if let Some(attribute_name) = self.consume_attribute_name() {
+                    self.consume_mode = ConsumeMode::AttributeValue;
+                    Some(attribute_name)
+                } else {
+                    None
+                }
+            }
+            ConsumeMode::AttributeValue => {
+                self.consume_mode = ConsumeMode::AttributeName;
+                self.consume_attribute_value()
+            }
+        }
+    }
+
+    fn consume_attribute_value(&mut self) -> Option<Token<'a>> {
+        self.consume_character('=').map(|_| {
+            if let Some(q) = self
+                .consume_character('"')
+                .or_else(|| self.consume_character('\''))
+            {
+                let q = q
+                    .source
+                    .chars()
+                    .next()
+                    .expect("either double or single quote");
+                self.consume_characters(|c| c != &q && c != &'\n');
+                todo!()
+            }
+            todo!()
+        })
+    }
+
+    fn consume_opening_tag_end(&mut self) -> Option<Token<'a>> {
+        self.consume_character('>').map(|span| Token {
+            span,
+            kind: TokenKind::OpeningTagEnd,
+        })
+    }
+
+    fn consume_text_node(&mut self) -> Option<Token<'a>> {
+        self.consume_characters(|c| c != &'<').map(|text_span| {
+            let text = text_span.source;
+            Token {
+                span: text_span,
+                kind: TokenKind::Text { text },
+            }
+        })
+    }
+
+    fn consume_tag(&mut self) -> Option<Token<'a>> {
+        let mut it_clone = self.it.clone();
+        if let Some((_i, c)) = it_clone.next() {
+            if c == '<' {
+                // it's a tag, let's start consumption
+                self.move_cursor(1);
+                let is_closing = self.consume_character('/').is_some();
+                let identifier = self
+                    .consume_identifier()
+                    .unwrap_or_else(|| Span::point(self.current_position()));
+                if is_closing {
+                    self.consume_character('>');
+                }
+                let name = identifier.source;
+                Some(Token {
+                    span: identifier,
+                    kind: if is_closing {
+                        TokenKind::TagEnd { name }
+                    } else {
+                        TokenKind::TagName { name }
+                    },
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn consume_attribute_name(&mut self) -> Option<Token<'a>> {
+        self.consume_identifier().map(|identifier| {
+            let name = identifier.source;
+            Token {
+                span: identifier,
+                kind: TokenKind::AttributeName { name },
+            }
+        })
+    }
+
+    fn consume_identifier(&mut self) -> Option<Span<'a>> {
+        self.consume_whitespace();
+        self.consume_characters(|c| c != &'>' && !c.is_whitespace())
+    }
+
+    fn current_position(&self) -> Position {
+        Position {
+            line: self.line,
+            column: self.column,
+        }
+    }
+
+    fn consume_whitespace(&mut self) {
+        self.consume_characters(|c| c.is_whitespace());
+    }
+
+    fn consume_character(&mut self, c: char) -> Option<Span<'a>> {
+        let start = self.current_position();
+        if let Some((i, next_c)) = self.look_ahead1() {
+            if next_c != c {
+                return None;
+            }
+            let end = self.current_position();
+            if c == '\n' {
+                self.line += 1;
+                self.column = 0;
+            } else {
+                self.column += 1;
+            }
+            self.it.next();
+            Some(Span {
+                range: Range { start, end },
+                source: &self.source[i - 1..i],
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Consume characters while the given condition evaluates to true
+    fn consume_characters<F>(&mut self, condition: F) -> Option<Span<'a>>
+    where
+        F: Fn(&char) -> bool,
+    {
+        let start = Position {
+            line: self.line,
+            column: self.column,
+        };
+        let mut start_index = None;
+        let mut last_index = 0;
+        let mut it_clone = self.it.clone();
+        while let Some((i, c)) = it_clone.next() {
+            if !condition(&c) {
+                break;
+            }
+            self.it.next();
+            if start_index.is_none() {
+                start_index = Some(i);
+            }
+            if c == '\n' {
+                self.line += 1;
+                self.column = 0;
+            } else {
+                self.column += 1;
+            }
+            last_index = i;
+        }
+        let end = Position {
+            line: self.line,
+            column: self.column,
+        };
+        start_index.map(|start_index| Span {
+            range: Range { start, end },
+            source: &self.source[start_index..last_index + 1],
+        })
+    }
+
+    fn move_cursor(&mut self, by: usize) {
+        if by == 0 {
+            return;
+        }
+        for _ in 0..by {
+            if let Some((_, c)) = self.it.next() {
+                if c == '\n' {
+                    self.line += 1;
+                    self.column = 0;
+                } else {
+                    self.column += 1;
+                }
+            }
+        }
+    }
+
+    fn look_ahead1(&mut self) -> Option<(usize, char)> {
+        self.it.clone().next()
+    }
+}
+
+pub struct Token<'a> {
+    span: Span<'a>,
+    kind: TokenKind<'a>,
+}
+
+#[derive(Debug, PartialEq)]
+enum TokenKind<'a> {
+    TagName { name: &'a str },
+    OpeningTagEnd,
+    AttributeName { name: &'a str },
+    AttributeValue { value: &'a str },
+    Text { text: &'a str },
+    TagEnd { name: &'a str },
+}
+
+enum ConsumeMode {
+    AttributeName,
+    AttributeValue,
+    OutsideTag,
+}
+
+struct Span<'a> {
+    range: Range,
+    source: &'a str,
+}
+impl<'a> Span<'a> {
+    fn point(pos: Position) -> Self {
+        Self {
+            range: Range {
+                start: pos.clone(),
+                end: pos,
+            },
+            source: "",
+        }
+    }
+}
+
+struct Range {
+    start: Position,
+    end: Position,
+}
+
+#[derive(Clone, Debug)]
+struct Position {
+    line: usize,
+    column: usize,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let source = "
+            <html>
+            <head>
+                <title>Hello</title>
+            </head>
+            <body>
+                Welcome to my website!
+            </body>
+            </html>
+            ";
+        let mut tokenizer = Tokenizer::new(&source);
+        let expected_kinds = vec![
+            TokenKind::Text {
+                text: "\n            ",
+            },
+            TokenKind::TagName { name: "html" },
+            TokenKind::OpeningTagEnd,
+            TokenKind::Text {
+                text: "\n            ",
+            },
+            TokenKind::TagName { name: "head" },
+            TokenKind::OpeningTagEnd,
+            TokenKind::Text {
+                text: "\n                ",
+            },
+            TokenKind::TagName { name: "title" },
+            TokenKind::OpeningTagEnd,
+            TokenKind::Text { text: "Hello" },
+            TokenKind::TagEnd { name: "title" },
+            TokenKind::Text {
+                text: "\n            ",
+            },
+            TokenKind::TagEnd { name: "head" },
+            TokenKind::Text {
+                text: "\n            ",
+            },
+            TokenKind::TagName { name: "body" },
+            TokenKind::OpeningTagEnd,
+            TokenKind::Text {
+                text: "\n                Welcome to my website!\n            ",
+            },
+            TokenKind::TagEnd { name: "body" },
+            TokenKind::Text {
+                text: "\n            ",
+            },
+            TokenKind::TagEnd { name: "html" },
+            TokenKind::Text {
+                text: "\n            ",
+            },
+        ];
+        for (i, k) in expected_kinds.iter().enumerate() {
+            let got_token = tokenizer
+                .next()
+                .expect(&format!("Token to exist. iteration: {i}"));
+            assert_eq!((i, &got_token.kind), (i, k));
+        }
+        assert!(tokenizer.next().is_none());
+    }
+}
