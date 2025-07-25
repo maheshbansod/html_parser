@@ -266,8 +266,17 @@ pub struct Token<'a> {
     kind: TokenKind<'a>,
 }
 
+impl<'a> Token<'a> {
+    pub fn kind(&self) -> &TokenKind<'a> {
+        &self.kind
+    }
+    pub fn span(&self) -> &Span<'a> {
+        &self.span
+    }
+}
+
 #[derive(Debug, PartialEq)]
-enum TokenKind<'a> {
+pub enum TokenKind<'a> {
     TagName { name: &'a str },
     OpeningTagEnd,
     AttributeName { name: &'a str },
@@ -283,7 +292,7 @@ enum ConsumeMode {
 }
 
 #[derive(Clone, Debug)]
-struct Span<'a> {
+pub struct Span<'a> {
     range: Range,
     source: &'a str,
 }
