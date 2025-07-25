@@ -23,7 +23,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     pub fn next(&mut self) -> Option<Token<'a>> {
-        match self.consume_mode {
+        match &mut self.consume_mode {
             ConsumeMode::OutsideTag => {
                 if let Some(tag) = self.consume_tag() {
                     if !matches!(tag.kind, TokenKind::TagEnd { name: _ }) {
@@ -36,6 +36,7 @@ impl<'a> Tokenizer<'a> {
             }
             ConsumeMode::AttributeName => {
                 self.consume_whitespace();
+                self.consume_character('/');
                 if let Some(tag_end) = self.consume_opening_tag_end() {
                     self.consume_mode = ConsumeMode::OutsideTag;
                     Some(tag_end)
@@ -65,17 +66,26 @@ impl<'a> Tokenizer<'a> {
                         .chars()
                         .next()
                         .expect("either double or single quote");
-                    println!("waiting for c to not be {q}");
-                    self.consume_characters(|c| c != &q).map(|span| {
-                        self.consume_character(q);
-                        let value = span.source;
-                        Token {
-                            span,
-                            kind: TokenKind::AttributeValue { value },
-                        }
-                    })
+                    println!("consiming till next {q}");
+                    self.consume_characters(|c| c != &q)
+                        .map(|span| {
+                            self.consume_character(q);
+                            let value = span.source;
+                            Token {
+                                span,
+                                kind: TokenKind::AttributeValue { value },
+                            }
+                        })
+                        .or_else(|| {
+                            let span = Span::point(self.current_position());
+                            let value = span.source;
+                            Some(Token {
+                                span,
+                                kind: TokenKind::AttributeValue { value },
+                            })
+                        })
                 } else {
-                    self.consume_characters(|c| !c.is_whitespace() && c != &'>')
+                    self.consume_characters(|c| !c.is_whitespace() && c != &'>' && c != &'/')
                         .map(|span| {
                             let value = span.source;
                             Token {
@@ -155,7 +165,7 @@ impl<'a> Tokenizer<'a> {
 
     fn consume_identifier(&mut self) -> Option<Span<'a>> {
         self.consume_whitespace();
-        self.consume_characters(|c| c != &'=' && c != &'>' && !c.is_whitespace())
+        self.consume_characters(|c| c != &'=' && c != &'/' && c != &'>' && !c.is_whitespace())
     }
 
     fn current_position(&self) -> Position {
@@ -272,6 +282,7 @@ enum ConsumeMode {
     OutsideTag,
 }
 
+#[derive(Clone, Debug)]
 struct Span<'a> {
     range: Range,
     source: &'a str,
@@ -288,6 +299,7 @@ impl<'a> Span<'a> {
     }
 }
 
+#[derive(Clone, Debug)]
 struct Range {
     start: Position,
     end: Position,
@@ -432,5 +444,111 @@ mod test {
             let got = tokenizer.next().map(|g| g.kind);
             assert_eq!((i, got), (i, Some(k)));
         }
+    }
+
+    #[test]
+    fn tag_name_with_dashes() {
+        let s = "<custom-element>";
+        let mut tokenizer = Tokenizer::new(&s);
+        let token = tokenizer.next().expect("should exist");
+        assert_eq!(
+            token.kind,
+            TokenKind::TagName {
+                name: "custom-element"
+            }
+        );
+    }
+
+    #[test]
+    fn empty_attribute_value_quoted() {
+        let s = "<tag attr=\"\">";
+        let mut tokenizer = Tokenizer::new(&s);
+        tokenizer.next(); // tag
+        tokenizer.next(); // attr name
+        let token = tokenizer.next().expect("should exist");
+        assert_eq!(token.kind, TokenKind::AttributeValue { value: "" });
+    }
+
+    #[test]
+    fn attribute_value_with_mixed_quotes() {
+        let s = "<tag attr=\" He said 'hello' \">";
+        let mut tokenizer = Tokenizer::new(&s);
+        tokenizer.next(); // tag
+        tokenizer.next(); // attr name
+        let token = tokenizer.next().expect("should exist");
+        assert_eq!(
+            token.kind,
+            TokenKind::AttributeValue {
+                value: " He said 'hello' "
+            }
+        );
+    }
+
+    #[test]
+    fn self_closing_tag() {
+        let s = "<tag/>"; // not valid html but still
+        let mut tokenizer = Tokenizer::new(&s);
+        let tag_name = tokenizer.next().expect("should exist");
+        assert_eq!(tag_name.kind, TokenKind::TagName { name: "tag" });
+        let tag_end = tokenizer.next().expect("should exist");
+        assert_eq!(tag_end.kind, TokenKind::OpeningTagEnd);
+    }
+
+    #[test]
+    fn self_closing_tag_with_attributes() {
+        let s = "<tag a b c=d/>"; // not valid html but still
+        let mut tokenizer = Tokenizer::new(&s);
+        let tag_name = tokenizer.next().expect("should exist");
+        assert_eq!(tag_name.kind, TokenKind::TagName { name: "tag" });
+        let attrib_a = tokenizer.next().expect("should exist");
+        assert_eq!(attrib_a.kind, TokenKind::AttributeName { name: "a" });
+        let attrib_value_a = tokenizer.next().expect("should exist");
+        assert_eq!(attrib_value_a.kind, TokenKind::AttributeValue { value: "" });
+        let attrib_b = tokenizer.next().expect("should exist");
+        assert_eq!(attrib_b.kind, TokenKind::AttributeName { name: "b" });
+        let attrib_value_b = tokenizer.next().expect("should exist");
+        assert_eq!(attrib_value_b.kind, TokenKind::AttributeValue { value: "" });
+        let attrib_c = tokenizer.next().expect("should exist");
+        assert_eq!(attrib_c.kind, TokenKind::AttributeName { name: "c" });
+        let attrib_value_c = tokenizer.next().expect("should exist");
+        assert_eq!(
+            attrib_value_c.kind,
+            TokenKind::AttributeValue { value: "d" }
+        );
+        let tag_end = tokenizer.next().expect("should exist");
+        assert_eq!(tag_end.kind, TokenKind::OpeningTagEnd);
+    }
+
+    #[test]
+    fn attribute_name_starts_with_number() {
+        let s = "<tag 1attr=value>";
+        let mut tokenizer = Tokenizer::new(&s);
+        tokenizer.next();
+        let token = tokenizer.next().expect("should exist");
+        assert_eq!(token.kind, TokenKind::AttributeName { name: "1attr" });
+    }
+
+    #[test]
+    fn attribute_with_no_value_and_then_another_attribute_with_value() {
+        let s = "<tag attr1 attr2=value2>";
+        let mut tokenizer = Tokenizer::new(&s);
+
+        tokenizer.next(); // tag
+        assert_eq!(
+            tokenizer.next().unwrap().kind,
+            TokenKind::AttributeName { name: "attr1" }
+        );
+        assert_eq!(
+            tokenizer.next().unwrap().kind,
+            TokenKind::AttributeValue { value: "" }
+        );
+        assert_eq!(
+            tokenizer.next().unwrap().kind,
+            TokenKind::AttributeName { name: "attr2" }
+        );
+        assert_eq!(
+            tokenizer.next().unwrap().kind,
+            TokenKind::AttributeValue { value: "value2" }
+        );
     }
 }
