@@ -9,7 +9,7 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(source: &'a str) -> Self {
-        let tokenizer = Tokenizer::new(source);
+        let tokenizer = Tokenizer::new(source.trim());
         Self { tokenizer }
     }
 
@@ -230,8 +230,15 @@ mod tests {
         assert_eq!(nodes.len(), 1);
         match &nodes[0].kind {
             NodeKind::Element(element) => {
-                // Parser should gracefully handle invalid attributes, possibly by ignoring them
-                assert_eq!(element.attributes.len(), 0);
+                assert_eq!(element.attributes.len(), 1);
+                assert_eq!(
+                    element.attributes[0].name.kind(),
+                    &TokenKind::AttributeName { name: "lang" }
+                );
+                assert_eq!(
+                    element.attributes[0].value.kind(),
+                    &TokenKind::AttributeValue { value: "" }
+                );
             }
             _ => panic!("Expected an element node"),
         }

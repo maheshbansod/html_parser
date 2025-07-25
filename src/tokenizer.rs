@@ -49,12 +49,12 @@ impl<'a> Tokenizer<'a> {
             }
             ConsumeMode::AttributeValue => {
                 self.consume_mode = ConsumeMode::AttributeName;
-                self.consume_attribute_value()
+                Some(self.consume_attribute_value())
             }
         }
     }
 
-    fn consume_attribute_value(&mut self) -> Option<Token<'a>> {
+    fn consume_attribute_value(&mut self) -> Token<'a> {
         self.consume_character('=')
             .map(|_| {
                 if let Some(q) = self
@@ -66,7 +66,6 @@ impl<'a> Tokenizer<'a> {
                         .chars()
                         .next()
                         .expect("either double or single quote");
-                    println!("consiming till next {q}");
                     self.consume_characters(|c| c != &q)
                         .map(|span| {
                             self.consume_character(q);
@@ -76,13 +75,14 @@ impl<'a> Tokenizer<'a> {
                                 kind: TokenKind::AttributeValue { value },
                             }
                         })
-                        .or_else(|| {
+                        .unwrap_or_else(|| {
+                            self.consume_character(q);
                             let span = Span::point(self.current_position());
                             let value = span.source;
-                            Some(Token {
+                            Token {
                                 span,
                                 kind: TokenKind::AttributeValue { value },
-                            })
+                            }
                         })
                 } else {
                     self.consume_characters(|c| !c.is_whitespace() && c != &'>' && c != &'/')
@@ -93,17 +93,24 @@ impl<'a> Tokenizer<'a> {
                                 kind: TokenKind::AttributeValue { value },
                             }
                         })
+                        .unwrap_or_else(|| {
+                            let span = Span::point(self.current_position());
+                            let value = span.source;
+                            Token {
+                                span,
+                                kind: TokenKind::AttributeValue { value },
+                            }
+                        })
                 }
             })
-            .or_else(|| {
+            .unwrap_or_else(|| {
                 let span = Span::point(self.current_position());
                 let value = span.source;
-                Some(Some(Token {
+                Token {
                     span,
                     kind: TokenKind::AttributeValue { value },
-                }))
+                }
             })
-            .flatten()
     }
 
     fn consume_opening_tag_end(&mut self) -> Option<Token<'a>> {
@@ -476,6 +483,10 @@ mod test {
         tokenizer.next(); // attr name
         let token = tokenizer.next().expect("should exist");
         assert_eq!(token.kind, TokenKind::AttributeValue { value: "" });
+        assert_eq!(
+            tokenizer.next().map(|t| t.kind),
+            Some(TokenKind::OpeningTagEnd)
+        );
     }
 
     #[test]
