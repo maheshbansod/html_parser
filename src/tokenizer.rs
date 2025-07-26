@@ -287,8 +287,8 @@ impl<'a> Tokenizer<'a> {
         let mut start_index = None;
         let mut last_index = 0;
         let mut last_index_len = 1;
-        let mut it_clone = self.it.clone();
-        while let Some((i, c)) = it_clone.next() {
+        let it_clone = self.it.clone();
+        for (i, c) in it_clone {
             if !condition(&c) {
                 break;
             }
@@ -385,7 +385,7 @@ impl<'a> Span<'a> {
     }
 
     pub fn source(&self) -> &'a str {
-        &self.source
+        self.source
     }
 
     pub fn range(&self) -> &Range {

@@ -147,8 +147,8 @@ impl<'a> Attribute<'a> {
     }
     pub fn name_text(&self) -> &'a str {
         let span = self.name.span();
-        let source = span.source();
-        source
+        
+        (span.source()) as _
     }
 }
 
