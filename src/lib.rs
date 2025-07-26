@@ -532,7 +532,7 @@ mod tests {
         match &nodes[0].kind {
             NodeKind::Element(Element {
                 attributes,
-                children,
+                children: _,
                 tag_name,
             }) => {
                 assert_eq!(tag_name.span().source(), "a");

@@ -220,6 +220,7 @@ impl<'a> Tokenizer<'a> {
         };
         let mut start_index = None;
         let mut last_index = 0;
+        let mut last_index_len = 1;
         let mut it_clone = self.it.clone();
         while let Some((i, c)) = it_clone.next() {
             if !condition(&c) {
@@ -236,6 +237,7 @@ impl<'a> Tokenizer<'a> {
                 self.column += 1;
             }
             last_index = i;
+            last_index_len = c.len_utf8();
         }
         let end = Position {
             line: self.line,
@@ -243,7 +245,7 @@ impl<'a> Tokenizer<'a> {
         };
         start_index.map(|start_index| Span {
             range: Range { start, end },
-            source: &self.source[start_index..last_index + 1],
+            source: &self.source[start_index..last_index + last_index_len],
         })
     }
 
