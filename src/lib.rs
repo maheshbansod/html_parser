@@ -1,24 +1,59 @@
-use tokenizer::{Span, Token, TokenKind, Tokenizer};
+use std::fmt::Display;
+
+use tokenizer::{Token, TokenKind, Tokenizer};
 
 mod tokenizer;
 
 pub struct Parser<'a> {
     tokenizer: Tokenizer<'a>,
+
+    open_tag_stack: Vec<&'a str>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(source: &'a str) -> Self {
         let tokenizer = Tokenizer::new(source.trim());
-        Self { tokenizer }
+        Self {
+            tokenizer,
+            open_tag_stack: vec![],
+        }
+    }
+    pub fn parse(&mut self) -> Vec<Node<'a>> {
+        let (nodes, _) = self.parse_nodes();
+        nodes
     }
 
-    pub fn parse(&mut self) -> Vec<Node<'a>> {
+    pub fn parse_nodes(&mut self) -> (Vec<Node<'a>>, Option<&'a str>) {
         let mut nodes = Vec::new();
+        let mut end_tag = None;
         while let Some(token) = self.tokenizer.next() {
             match token.kind() {
-                TokenKind::TagName { name: _ } => {
+                TokenKind::TagName { name } => {
+                    self.open_tag_stack.push(name);
                     let attributes = self.parse_attributes();
-                    let children = self.parse();
+
+                    let (attributes, is_self_closing_tag) = if let Some(last) = attributes.last() {
+                        if last.name_text() == "/" && last.value_text() == "" {
+                            let mut attributes = attributes;
+                            attributes.pop();
+                            (attributes, true)
+                        } else {
+                            (attributes, false)
+                        }
+                    } else {
+                        (attributes, false)
+                    };
+                    let (children, node_end_tag) = if !is_self_closing_tag {
+                        self.parse_nodes()
+                    } else {
+                        (vec![], None)
+                    };
+                    if let Some(end_name) = node_end_tag {
+                        if &end_name != name {
+                            // some parent tag ended instead of self
+                            end_tag = Some(end_name);
+                        }
+                    }
                     let element = Element {
                         attributes,
                         children,
@@ -28,6 +63,15 @@ impl<'a> Parser<'a> {
                         kind: NodeKind::Element(element),
                     };
                     nodes.push(node);
+                    if end_tag.is_some() {
+                        break;
+                    }
+                }
+                TokenKind::TagEnd { name } => {
+                    if self.open_tag_stack.contains(name) {
+                        end_tag = Some(*name);
+                        break;
+                    }
                 }
                 TokenKind::Text { text: _ } => {
                     let node = Node {
@@ -38,7 +82,7 @@ impl<'a> Parser<'a> {
                 _ => {}
             }
         }
-        nodes
+        (nodes, end_tag)
     }
 
     fn parse_attributes(&mut self) -> Vec<Attribute<'a>> {
@@ -102,6 +146,43 @@ impl<'a> Attribute<'a> {
         let span = self.name.span();
         let source = span.source();
         source
+    }
+}
+
+impl<'a> Display for Node<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            NodeKind::Element(Element {
+                attributes,
+                children,
+                tag_name,
+            }) => {
+                write!(
+                    f,
+                    "({}{} {})",
+                    tag_name.span().source(),
+                    attributes
+                        .iter()
+                        .map(|a| a.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    children
+                        .iter()
+                        .map(|a| a.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            }
+            NodeKind::Text(token) => {
+                write!(f, "#text({})", token.span().source())
+            }
+        }
+    }
+}
+
+impl<'a> Display for Attribute<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}=\"{}\"]", self.name_text(), self.value_text())
     }
 }
 
@@ -330,7 +411,7 @@ mod tests {
             NodeKind::Element(element) => {
                 assert_eq!(
                     element.tag_name.kind(),
-                    &TokenKind::TagName { name: "html" }
+                    &TokenKind::TagName { name: "!DOCTYPE" }
                 );
             }
             _ => panic!("Expected an element node"),
@@ -394,6 +475,7 @@ mod tests {
         let mut parser = Parser::new(html);
         let nodes = parser.parse();
 
+        println!("{nodes:?}");
         assert_eq!(nodes.len(), 1);
         match &nodes[0].kind {
             NodeKind::Element(element) => {
@@ -582,5 +664,59 @@ mod tests {
             }
             _ => panic!("Expected an element node"),
         }
+    }
+
+    #[test]
+    fn test_dom() {
+        use pretty_assertions::assert_eq;
+        let html = "
+            <html>
+                <head>
+                    <title>Hello I'm Light</title>
+                </head>
+                <body>
+                    <p class=\"normal\">Welcome</p>
+                    <div class=\"flex flex-col\">
+                        <h1 class=\"heading\">
+                            Light's website
+                        </h1>
+                        <div class=\"flex\">
+                            <span class=\"faded\">Here we got</span>
+                            <ul>
+                                <li>A list</li>
+                                <li>A list item</li>
+                                <li>And <br /> A lot more than that
+                            </ul>
+                        </div>
+                    </div>
+                </body>
+            </html>
+            ";
+        let expected = "(html #text( )
+            (head #text( )
+                (title #text(Hello I'm Light)) #text( ))
+            #text( )
+            (body #text( )
+                (p[class=\"normal\"] #text(Welcome)) #text( )
+                (div[class=\"flex flex-col\"] #text( )
+                    (h1[class=\"heading\"] #text( Light's website )) #text( )
+                    (div[class=\"flex\"] #text( ) (span[class=\"faded\"] #text(Here we got)) #text( )
+                        (ul
+                            #text( )
+                            (li #text(A list))
+                            #text( )
+                            (li #text(A list item))
+                            #text( )
+                            (li #text(And ) (br ) #text( A lot more than that )))
+                        #text( ))
+                    #text( ))
+                #text( ))
+            #text( ))";
+        let got = Parser::new(&html).parse();
+        assert_eq!(got.len(), 1);
+        let got = got[0].to_string();
+        let got = got.split_whitespace().collect::<Vec<_>>().join(" ");
+        let expected = expected.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert_eq!(got, expected);
     }
 }

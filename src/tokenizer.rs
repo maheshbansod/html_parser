@@ -36,7 +36,6 @@ impl<'a> Tokenizer<'a> {
             }
             ConsumeMode::AttributeName => {
                 self.consume_whitespace();
-                self.consume_character('/');
                 if let Some(tag_end) = self.consume_opening_tag_end() {
                     self.consume_mode = ConsumeMode::OutsideTag;
                     Some(tag_end)
@@ -138,7 +137,7 @@ impl<'a> Tokenizer<'a> {
                 self.move_cursor(1);
                 let is_closing = self.consume_character('/').is_some();
                 let identifier = self
-                    .consume_identifier()
+                    .consume_tag_name()
                     .unwrap_or_else(|| Span::point(self.current_position()));
                 if is_closing {
                     self.consume_character('>');
@@ -171,6 +170,11 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn consume_identifier(&mut self) -> Option<Span<'a>> {
+        self.consume_whitespace();
+        self.consume_characters(|c| c != &'=' && c != &'>' && !c.is_whitespace())
+    }
+
+    fn consume_tag_name(&mut self) -> Option<Span<'a>> {
         self.consume_whitespace();
         self.consume_characters(|c| c != &'=' && c != &'/' && c != &'>' && !c.is_whitespace())
     }
@@ -521,6 +525,13 @@ mod test {
         let mut tokenizer = Tokenizer::new(&s);
         let tag_name = tokenizer.next().expect("should exist");
         assert_eq!(tag_name.kind, TokenKind::TagName { name: "tag" });
+        let attribute_name = tokenizer.next().expect("should exist");
+        assert_eq!(attribute_name.kind, TokenKind::AttributeName { name: "/" });
+        let attribute_value = tokenizer.next().expect("should exist");
+        assert_eq!(
+            attribute_value.kind,
+            TokenKind::AttributeValue { value: "" }
+        );
         let tag_end = tokenizer.next().expect("should exist");
         assert_eq!(tag_end.kind, TokenKind::OpeningTagEnd);
     }
@@ -545,6 +556,13 @@ mod test {
         assert_eq!(
             attrib_value_c.kind,
             TokenKind::AttributeValue { value: "d" }
+        );
+        let attribute_name = tokenizer.next().expect("should exist");
+        assert_eq!(attribute_name.kind, TokenKind::AttributeName { name: "/" });
+        let attribute_value = tokenizer.next().expect("should exist");
+        assert_eq!(
+            attribute_value.kind,
+            TokenKind::AttributeValue { value: "" }
         );
         let tag_end = tokenizer.next().expect("should exist");
         assert_eq!(tag_end.kind, TokenKind::OpeningTagEnd);
