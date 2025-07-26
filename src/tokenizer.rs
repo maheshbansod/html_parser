@@ -25,7 +25,9 @@ impl<'a> Tokenizer<'a> {
     pub fn next(&mut self) -> Option<Token<'a>> {
         match &mut self.consume_mode {
             ConsumeMode::OutsideTag => {
-                if let Some(tag) = self.consume_tag() {
+                if let Some(comment) = self.consume_comment() {
+                    Some(comment)
+                } else if let Some(tag) = self.consume_tag() {
                     if !matches!(tag.kind, TokenKind::TagEnd { name: _ }) {
                         self.consume_mode = ConsumeMode::AttributeName;
                     }
@@ -129,6 +131,19 @@ impl<'a> Tokenizer<'a> {
         })
     }
 
+    fn consume_comment(&mut self) -> Option<Token<'a>> {
+        self.consume_string("<!--").and_then(|_| {
+            self.consume_till_string("-->").map(|span| {
+                self.move_cursor(3); // consume the last 3
+                let comment = span.source;
+                Token {
+                    span,
+                    kind: TokenKind::Comment { comment },
+                }
+            })
+        })
+    }
+
     fn consume_tag(&mut self) -> Option<Token<'a>> {
         let mut it_clone = self.it.clone();
         if let Some((_i, c)) = it_clone.next() {
@@ -188,6 +203,53 @@ impl<'a> Tokenizer<'a> {
 
     fn consume_whitespace(&mut self) {
         self.consume_characters(|c| c.is_whitespace());
+    }
+
+    fn consume_till_string(&mut self, s: &str) -> Option<Span<'a>> {
+        let mut it_clone = self.it.clone();
+        it_clone.next().and_then(|(i, c)| {
+            let rest = &self.source[i..];
+            println!("({},{})", i, c);
+            rest.find(s).map(|s_index| {
+                println!("s_index: {s_index}");
+                let move_by = s_index;
+                let start = self.current_position();
+                self.move_cursor(move_by);
+                let end = self.current_position();
+                let source = &self.source[i..i + s_index];
+                Span {
+                    range: Range { start, end },
+                    source,
+                }
+            })
+        })
+    }
+
+    fn consume_string(&mut self, s: &str) -> Option<Span<'a>> {
+        let mut it_clone = self.it.clone();
+        it_clone.next().and_then(|(i, c)| {
+            if !s.starts_with(c) {
+                None
+            } else {
+                let end_index = i + s.len();
+                let slice = if self.source[i..].is_char_boundary(end_index) {
+                    &self.source[i..end_index]
+                } else {
+                    ""
+                };
+                let start = self.current_position();
+                if slice.starts_with(s) {
+                    self.move_cursor(s.len());
+                    let end = self.current_position();
+                    Some(Span {
+                        range: Range { start, end },
+                        source: &self.source[i..end_index],
+                    })
+                } else {
+                    None
+                }
+            }
+        })
     }
 
     fn consume_character(&mut self, c: char) -> Option<Span<'a>> {
@@ -297,6 +359,7 @@ pub enum TokenKind<'a> {
     AttributeValue { value: &'a str },
     Text { text: &'a str },
     TagEnd { name: &'a str },
+    Comment { comment: &'a str },
 }
 
 enum ConsumeMode {
@@ -598,6 +661,18 @@ mod test {
         assert_eq!(
             tokenizer.next().unwrap().kind,
             TokenKind::AttributeValue { value: "value2" }
+        );
+    }
+
+    #[test]
+    fn comment() {
+        let s = "<!-- hello this is a comment -->";
+        let mut tokenizer = Tokenizer::new(&s);
+        assert_eq!(
+            tokenizer.next().unwrap().kind,
+            TokenKind::Comment {
+                comment: " hello this is a comment "
+            }
         );
     }
 }

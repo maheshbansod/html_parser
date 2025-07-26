@@ -52,6 +52,8 @@ impl<'a> Parser<'a> {
                         if &end_name != name {
                             // some parent tag ended instead of self
                             end_tag = Some(end_name);
+                        } else {
+                            self.open_tag_stack.pop();
                         }
                     }
                     let element = Element {
@@ -117,6 +119,7 @@ pub struct Node<'a> {
 pub enum NodeKind<'a> {
     Text(Token<'a>),
     Element(Element<'a>),
+    Comment(Token<'a>),
 }
 
 #[derive(Debug)]
@@ -175,6 +178,9 @@ impl<'a> Display for Node<'a> {
             }
             NodeKind::Text(token) => {
                 write!(f, "#text({})", token.span().source())
+            }
+            NodeKind::Comment(token) => {
+                write!(f, "/*{}*/", token.span().source())
             }
         }
     }
@@ -718,5 +724,45 @@ mod tests {
         let got = got.split_whitespace().collect::<Vec<_>>().join(" ");
         let expected = expected.split_whitespace().collect::<Vec<_>>().join(" ");
         assert_eq!(got, expected);
+    }
+    #[test]
+    fn test_attribute_with_unclosed_quote() {
+        let html = "<div attr=\"value></div>";
+        let mut parser = Parser::new(html);
+        let nodes = parser.parse();
+
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].kind {
+            NodeKind::Element(element) => {
+                assert_eq!(element.attributes.len(), 1);
+                assert_eq!(element.attributes[0].name_text(), "attr");
+                // this is apparently not spec compliant
+                assert_eq!(element.attributes[0].value_text(), "value></div>");
+            }
+            _ => panic!("Expected an element node"),
+        }
+    }
+    #[test]
+    fn test_unclosed_tags_with_attributes() {
+        let html = "<div class=\"test\"><span>";
+        let mut parser = Parser::new(html);
+        let nodes = parser.parse();
+
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].kind {
+            NodeKind::Element(element) => {
+                assert_eq!(element.tag_name.span().source(), "div");
+                assert_eq!(element.attributes.len(), 1);
+                assert_eq!(element.children.len(), 1);
+
+                match &element.children[0].kind {
+                    NodeKind::Element(span_element) => {
+                        assert_eq!(span_element.tag_name.span().source(), "span");
+                    }
+                    _ => panic!("Expected span, got: {:?}", &element.children[0].kind),
+                }
+            }
+            _ => panic!("Expected div, got: {:?}", &nodes[0].kind),
+        }
     }
 }
