@@ -313,18 +313,26 @@ impl<'a> Span<'a> {
             source: "",
         }
     }
+
+    pub fn source(&self) -> &'a str {
+        &self.source
+    }
+
+    pub fn range(&self) -> &Range {
+        &self.range
+    }
 }
 
 #[derive(Clone, Debug)]
-struct Range {
-    start: Position,
-    end: Position,
+pub struct Range {
+    pub start: Position,
+    pub end: Position,
 }
 
 #[derive(Clone, Debug)]
-struct Position {
-    line: usize,
-    column: usize,
+pub struct Position {
+    pub line: usize,
+    pub column: usize,
 }
 
 #[cfg(test)]

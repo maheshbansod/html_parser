@@ -64,10 +64,6 @@ impl<'a> Parser<'a> {
     }
 }
 
-trait ParseTreeNode<'a> {
-    fn span(&self) -> Span<'a>;
-}
-
 pub struct Node<'a> {
     kind: NodeKind<'a>,
 }
@@ -83,9 +79,26 @@ pub struct Element<'a> {
     tag_name: Token<'a>,
 }
 
-struct Attribute<'a> {
+pub struct Attribute<'a> {
     name: Token<'a>,
     value: Token<'a>,
+}
+
+impl<'a> Attribute<'a> {
+    pub fn value_text(&self) -> &'a str {
+        let span = self.value.span();
+        let source = span.source();
+        if source.starts_with('"') || source.starts_with('\'') {
+            &source[1..source.len() - 1]
+        } else {
+            source
+        }
+    }
+    pub fn name_text(&self) -> &'a str {
+        let span = self.name.span();
+        let source = span.source();
+        source
+    }
 }
 
 #[cfg(test)]
@@ -505,6 +518,27 @@ mod tests {
                     }
                     _ => panic!("Expected a text node"),
                 }
+            }
+            _ => panic!("Expected an element node"),
+        }
+    }
+
+    #[test]
+    fn test_attr_name_value() {
+        let html = "<a href=\"https://maheshbansod.com\" />";
+        let mut parser = Parser::new(html);
+        let nodes = parser.parse();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].kind {
+            NodeKind::Element(Element {
+                attributes,
+                children,
+                tag_name,
+            }) => {
+                assert_eq!(tag_name.span().source(), "a");
+                assert_eq!(attributes.len(), 1);
+                assert_eq!(attributes[0].name_text(), "href");
+                assert_eq!(attributes[0].value_text(), "https://maheshbansod.com");
             }
             _ => panic!("Expected an element node"),
         }
