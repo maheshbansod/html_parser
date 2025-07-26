@@ -64,21 +64,25 @@ impl<'a> Parser<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct Node<'a> {
     kind: NodeKind<'a>,
 }
 
+#[derive(Debug)]
 pub enum NodeKind<'a> {
     Text(Token<'a>),
     Element(Element<'a>),
 }
 
+#[derive(Debug)]
 pub struct Element<'a> {
     attributes: Vec<Attribute<'a>>,
     children: Vec<Node<'a>>,
     tag_name: Token<'a>,
 }
 
+#[derive(Debug)]
 pub struct Attribute<'a> {
     name: Token<'a>,
     value: Token<'a>,
@@ -186,8 +190,19 @@ mod tests {
         let html = "<html>";
         let mut parser = Parser::new(html);
         let nodes = parser.parse();
-        //  This might not be the correct way to handle this, but it should not panic
-        assert_eq!(nodes.len(), 0);
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].kind {
+            NodeKind::Element(Element {
+                attributes,
+                children,
+                tag_name,
+            }) => {
+                assert_eq!(tag_name.span().source(), "html");
+                assert_eq!(children.len(), 0);
+                assert_eq!(attributes.len(), 0);
+            }
+            _ => panic!("Expected html, got: {:?}", &nodes[0].kind),
+        }
     }
 
     #[test]
@@ -196,7 +211,32 @@ mod tests {
         let mut parser = Parser::new(html);
         let nodes = parser.parse();
         // This might not be the correct way to handle this, but it should not panic
-        assert_eq!(nodes.len(), 0);
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0].kind {
+            NodeKind::Element(Element {
+                attributes,
+                children,
+                tag_name,
+            }) => {
+                assert_eq!(tag_name.span().source(), "html");
+                assert_eq!(attributes.len(), 0);
+                let nodes = children;
+                assert_eq!(nodes.len(), 1);
+                match &nodes[0].kind {
+                    NodeKind::Element(Element {
+                        attributes,
+                        children,
+                        tag_name,
+                    }) => {
+                        assert_eq!(tag_name.span().source(), "div");
+                        assert_eq!(attributes.len(), 0);
+                        assert_eq!(children.len(), 0);
+                    }
+                    _ => panic!("Expected div, got: {:?}", &nodes[0].kind),
+                }
+            }
+            _ => panic!("Expected html, got: {:?}", &nodes[0].kind),
+        }
     }
 
     #[test]
