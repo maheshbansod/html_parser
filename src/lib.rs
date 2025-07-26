@@ -3,8 +3,7 @@ use tokenizer::{Span, Token, TokenKind, Tokenizer};
 mod tokenizer;
 
 pub struct Parser<'a> {
-    /// todo: let's make it private
-    pub tokenizer: Tokenizer<'a>,
+    tokenizer: Tokenizer<'a>,
 }
 
 impl<'a> Parser<'a> {
